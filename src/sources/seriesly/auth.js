@@ -28,9 +28,29 @@ class SerieslyAuth {
         if (!this._browser || !this._browser.isConnected()) {
             this._browser = await chromium.launch({
                 headless: false,
-                args: ['--disable-blink-features=AutomationControlled'],
+                args: [
+                    '--disable-blink-features=AutomationControlled',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--window-size=1280,720',
+                ],
             });
-            this._context = await this._browser.newContext();
+            this._context = await this._browser.newContext({
+                viewport: { width: 1280, height: 720 },
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale: 'es-ES',
+                timezoneId: 'Europe/Madrid',
+            });
+            
+            // Remove webdriver flag
+            await this._context.addInitScript(() => {
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            });
         }
         return { browser: this._browser, context: this._context };
     }
@@ -44,6 +64,48 @@ class SerieslyAuth {
     }
 
     /**
+     * Wait for Turnstile to complete with multiple strategies
+     */
+    async _waitForTurnstile(page, timeout = 60000) {
+        const startTime = Date.now();
+        
+        while (Date.now() - startTime < timeout) {
+            // Check if button is enabled
+            const buttonEnabled = await page.evaluate(() => {
+                const btn = document.getElementById('submit-btn');
+                return btn && !btn.disabled;
+            });
+            
+            if (buttonEnabled) {
+                logger.info('Series.ly: Turnstile solved - button enabled');
+                return true;
+            }
+            
+            // Try to find and interact with Turnstile iframe
+            const turnstileFrame = page.frameLocator('iframe[src*="turnstile"]').first();
+            try {
+                const checkbox = turnstileFrame.locator('input[type="checkbox"]');
+                if (await checkbox.isVisible({ timeout: 1000 })) {
+                    logger.info('Series.ly: Found Turnstile checkbox, clicking...');
+                    await checkbox.click().catch(() => {});
+                }
+            } catch {
+                // Checkbox not found, continue waiting
+            }
+            
+            // Log progress every 10 seconds
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            if (elapsed % 10 === 0 && elapsed > 0) {
+                logger.info(`Series.ly: waiting for Turnstile... (${elapsed}s elapsed)`);
+            }
+            
+            await page.waitForTimeout(1000);
+        }
+        
+        return false;
+    }
+
+    /**
      * Login using Playwright to handle Cloudflare Turnstile.
      * Keeps browser alive for subsequent link resolution.
      */
@@ -54,14 +116,23 @@ class SerieslyAuth {
             const page = await context.newPage();
 
             await page.goto(`${this.baseUrl}/ingresar`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            
+            // Wait for form to be ready
+            await page.waitForSelector('input[name="email"]', { timeout: 10000 });
+            
             await page.fill('input[name="email"]', email);
             await page.fill('input[name="password"]', password);
 
-            logger.info('Series.ly: waiting for Turnstile...');
-            await page.waitForFunction(() => {
-                const btn = document.getElementById('submit-btn');
-                return btn && !btn.disabled;
-            }, { timeout: 30000 });
+            logger.info('Series.ly: credentials filled, waiting for Turnstile...');
+            
+            // Wait for Turnstile with extended timeout and multiple strategies
+            const turnstileResolved = await this._waitForTurnstile(page, 90000);
+            
+            if (!turnstileResolved) {
+                logger.error('Series.ly: Turnstile timeout - could not resolve challenge');
+                await page.close();
+                return false;
+            }
 
             await page.click('#submit-btn');
             await page.waitForURL((url) => !url.pathname.includes('/ingresar'), { timeout: 15000 });
