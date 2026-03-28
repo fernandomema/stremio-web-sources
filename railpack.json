@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.railpack.com",
   "buildAptPackages": [
+    "xvfb",
     "libglib2.0-0",
     "libnss3",
     "libnspr4",
@@ -32,6 +33,7 @@
   },
   "deploy": {
     "aptPackages": [
+      "xvfb",
       "libglib2.0-0",
       "libnss3",
       "libnspr4",
@@ -56,6 +58,6 @@
       "libxext6",
       "libexpat1"
     ],
-    "startCommand": "npm start"
+    "startCommand": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' npm start"
   }
 }
