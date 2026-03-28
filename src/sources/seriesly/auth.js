@@ -1,10 +1,14 @@
-const { chromium } = require('playwright');
+const { chromium } = require('playwright-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { URL } = require('url');
 const { logger } = require('../../core/logger');
 
+// Enable stealth plugin to avoid Cloudflare detection
+chromium.use(StealthPlugin());
+
 /**
  * Handles authentication with series.ly.
- * Uses Playwright for login (Cloudflare Turnstile requires a browser).
+ * Uses Playwright with stealth for login (Cloudflare Turnstile requires a browser).
  * Keeps a persistent browser context alive for Turnstile-protected link resolution.
  */
 class SerieslyAuth {
@@ -46,11 +50,7 @@ class SerieslyAuth {
                 locale: 'es-ES',
                 timezoneId: 'Europe/Madrid',
             });
-            
-            // Remove webdriver flag
-            await this._context.addInitScript(() => {
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            });
+            // Stealth plugin handles webdriver flag automatically
         }
         return { browser: this._browser, context: this._context };
     }
@@ -66,7 +66,7 @@ class SerieslyAuth {
     /**
      * Wait for Turnstile to complete with multiple strategies
      */
-    async _waitForTurnstile(page, timeout = 60000) {
+    async _waitForTurnstile(page, timeout = 30000) {
         const startTime = Date.now();
         
         while (Date.now() - startTime < timeout) {
@@ -82,20 +82,28 @@ class SerieslyAuth {
             }
             
             // Try to find and interact with Turnstile iframe
-            const turnstileFrame = page.frameLocator('iframe[src*="turnstile"]').first();
             try {
-                const checkbox = turnstileFrame.locator('input[type="checkbox"]');
-                if (await checkbox.isVisible({ timeout: 1000 })) {
-                    logger.info('Series.ly: Found Turnstile checkbox, clicking...');
-                    await checkbox.click().catch(() => {});
+                const frames = page.frames();
+                for (const frame of frames) {
+                    if (frame.url().includes('turnstile') || frame.url().includes('challenges.cloudflare.com')) {
+                        const checkbox = await frame.$('input[type="checkbox"]');
+                        if (checkbox) {
+                            const isVisible = await checkbox.isVisible();
+                            if (isVisible) {
+                                logger.info('Series.ly: Found Turnstile checkbox, clicking...');
+                                await checkbox.click().catch(() => {});
+                                await page.waitForTimeout(2000);
+                            }
+                        }
+                    }
                 }
             } catch {
-                // Checkbox not found, continue waiting
+                // Frames not accessible, continue waiting
             }
             
-            // Log progress every 10 seconds
+            // Log progress every 15 seconds
             const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            if (elapsed % 10 === 0 && elapsed > 0) {
+            if (elapsed % 15 === 0 && elapsed > 0) {
                 logger.info(`Series.ly: waiting for Turnstile... (${elapsed}s elapsed)`);
             }
             
@@ -111,7 +119,7 @@ class SerieslyAuth {
      */
     async login(email, password) {
         try {
-            logger.info('Series.ly: launching browser for login...');
+            logger.info('Series.ly: launching browser for login (with stealth)...');
             const { context } = await this._ensureBrowser();
             const page = await context.newPage();
 
@@ -120,13 +128,16 @@ class SerieslyAuth {
             // Wait for form to be ready
             await page.waitForSelector('input[name="email"]', { timeout: 10000 });
             
+            // Type more human-like with small delays
             await page.fill('input[name="email"]', email);
+            await page.waitForTimeout(300);
             await page.fill('input[name="password"]', password);
+            await page.waitForTimeout(300);
 
             logger.info('Series.ly: credentials filled, waiting for Turnstile...');
             
-            // Wait for Turnstile with extended timeout and multiple strategies
-            const turnstileResolved = await this._waitForTurnstile(page, 90000);
+            // Wait for Turnstile with stealth plugin
+            const turnstileResolved = await this._waitForTurnstile(page, 30000);
             
             if (!turnstileResolved) {
                 logger.error('Series.ly: Turnstile timeout - could not resolve challenge');
