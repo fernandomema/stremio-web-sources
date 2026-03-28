@@ -28,7 +28,7 @@
   ],
   "steps": {
     "install": {
-      "commands": ["npm install", "npx playwright install chromium"]
+      "commands": ["npm install", "npx playwright install chromium", "chmod +x start.sh"]
     }
   },
   "deploy": {
@@ -58,6 +58,6 @@
       "libxext6",
       "libexpat1"
     ],
-    "startCommand": "xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' npm start"
+    "startCommand": "./start.sh"
   }
 }
