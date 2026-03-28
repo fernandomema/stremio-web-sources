@@ -1,0 +1,22 @@
+{
+  "name": "stremio-web-sources",
+  "version": "1.0.0",
+  "description": "Modular Stremio addon - multiple sources under one server",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": ["stremio", "addon"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "node-fetch": "^3.3.2",
+    "p-queue": "^9.1.0",
+    "playwright": "^1.58.2",
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}
